@@ -1,0 +1,24 @@
+# Pages CMS editor settings (https://pagescms.org). Sign in at app.pagescms.org with GitHub.
+# The pages are the old site's HTML, copied as-is so the design matches exactly.
+media:
+  input: src/wp-content/uploads
+  output: /wp-content/uploads
+content:
+  - name: home
+    label: Home page (HTML)
+    type: file
+    path: src/index.html
+    fields:
+      - { name: body, label: Page HTML, type: code, options: { language: html } }
+  - name: mintyfresh
+    label: Mintyfresh page (HTML)
+    type: file
+    path: src/mintyfresh/index.html
+    fields:
+      - { name: body, label: Page HTML, type: code, options: { language: html } }
+  - name: bio
+    label: Bio page (HTML)
+    type: file
+    path: src/bio/index.html
+    fields:
+      - { name: body, label: Page HTML, type: code, options: { language: html } }
