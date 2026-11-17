@@ -1,0 +1,25 @@
+# One-time job: Elementor loads some scripts on demand ("chunks"), so the page mirror missed them.
+# Copies them from the official Elementor 4.4.0 release (same version the old site runs).
+name: Fetch Elementor chunks
+on:
+  workflow_dispatch:
+  push:
+    branches: [old-site-snapshot]
+    paths: [.github/workflows/fetch-elementor-chunks.yml]
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          curl -sSfL https://downloads.wordpress.org/plugin/elementor.4.4.0.zip -o /tmp/e.zip
+          unzip -q /tmp/e.zip 'elementor/assets/js/chunks/*' 'elementor/assets/js/frontend.min.js' -d /tmp/e
+          mkdir -p reference/elementor-4.4.0 && cp -r /tmp/e/elementor/assets/js/chunks reference/elementor-4.4.0/
+          cmp /tmp/e/elementor/assets/js/frontend.min.js "reference/old-site/moniquemartin.net/wp-content/plugins/elementor/assets/js/frontend.min.js?ver=4.4.0" && echo "frontend.min.js matches the old site"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add reference/elementor-4.4.0
+          git commit -qm "Add Elementor 4.4.0 script chunks" || true
+          git push
