@@ -1,0 +1,83 @@
+# One-time job: saves a copy of the old WordPress site (pages, styles, scripts,
+# images, screenshots) for the rebuild. Lives only on the old-site-snapshot branch.
+name: Snapshot old site
+on:
+  workflow_dispatch:
+  push:
+    branches: [old-site-snapshot]
+    paths: [.github/workflows/snapshot-old-site.yml]
+permissions:
+  contents: write
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point the domain at the old HostGator server
+        run: echo "192.185.41.41 moniquemartin.net www.moniquemartin.net" | sudo tee -a /etc/hosts
+      - name: Mirror the three real pages with everything they load
+        run: |
+          mkdir -p reference/old-site && cd reference/old-site
+          for u in "https://moniquemartin.net/" "https://moniquemartin.net/?page_id=1386" "https://moniquemartin.net/?page_id=7126"; do
+            wget --page-requisites --span-hosts --convert-links --adjust-extension --no-check-certificate \
+              --domains=moniquemartin.net,i0.wp.com,i1.wp.com,i2.wp.com,fonts.googleapis.com,fonts.gstatic.com \
+              -e robots=off --wait=0.2 --user-agent="Mozilla/5.0 (site migration snapshot)" "$u" || true
+          done
+          find . -type f | wc -l; du -sh .
+      - name: Raw HTML and CSS referenced from stylesheets
+        run: |
+          mkdir -p reference/raw && cd reference/raw
+          curl -sk -A "Mozilla/5.0" https://moniquemartin.net/ -o home.html
+          curl -sk -A "Mozilla/5.0" "https://moniquemartin.net/?page_id=1386" -o mintyfresh.html
+          curl -sk -A "Mozilla/5.0" "https://moniquemartin.net/?page_id=7126" -o bio.html
+          # files (fonts, icons, backgrounds) referenced inside the downloaded CSS
+          cd ../old-site
+          grep -rhoE "url\((['\"]?)[^)'\"]+\1\)" --include=*.css . | sed -E "s/url\((['\"]?)//; s/['\"]?\)$//" | grep -vE '^data:|^#' | sort -u > ../css-urls.txt || true
+          wc -l ../css-urls.txt
+      - name: Original full-size uploads used on the pages
+        run: |
+          mkdir -p reference/uploads
+          cat reference/raw/*.html | grep -oE "moniquemartin\.net/wp-content/uploads/[^\"' ?)]+\.(jpe?g|png|gif|webp|svg)" | sort -u > reference/uploads.txt
+          wc -l reference/uploads.txt
+          while read p; do f="reference/uploads/${p#moniquemartin.net/wp-content/uploads/}"; mkdir -p "$(dirname "$f")"; curl -skf -A "Mozilla/5.0" "https://$p" -o "$f" || echo "miss $p"; done < reference/uploads.txt
+          du -sh reference/uploads
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Screenshots and computed resource list
+        run: |
+          npm i --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+          cat > shot.mjs <<'JS'
+          import { chromium } from 'playwright';
+          import fs from 'fs';
+          const pages = [['home', '/'], ['mintyfresh', '/?page_id=1386'], ['bio', '/?page_id=7126']];
+          fs.mkdirSync('reference/screens', { recursive: true });
+          const browser = await chromium.launch({ args: ['--ignore-certificate-errors'] });
+          const requests = new Set();
+          for (const [w, h, tag] of [[1440, 900, 'desktop'], [390, 844, 'mobile']]) {
+            const ctx = await browser.newContext({ viewport: { width: w, height: h }, ignoreHTTPSErrors: true });
+            const p = await ctx.newPage();
+            p.on('request', r => requests.add(r.resourceType() + ' ' + r.url()));
+            for (const [name, path] of pages) {
+              try {
+                await p.goto('https://moniquemartin.net' + path, { waitUntil: 'networkidle', timeout: 90000 });
+                for (let y = 0; y < 20000; y += 600) { await p.mouse.wheel(0, 600); await p.waitForTimeout(150); }
+                await p.waitForTimeout(2000);
+                await p.screenshot({ path: `reference/screens/${tag}-${name}.png`, fullPage: true });
+                if (tag === 'desktop') fs.writeFileSync(`reference/raw/${name}.rendered.html`, await p.content());
+                console.log('ok', tag, path);
+              } catch (e) { console.log('fail', path, e.message); }
+            }
+            await ctx.close();
+          }
+          fs.writeFileSync('reference/requests.txt', [...requests].sort().join('\n'));
+          await browser.close();
+          JS
+          node shot.mjs
+      - name: Commit snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add reference
+          git commit -qm "Snapshot of the old WordPress site for the rebuild" || true
+          git push
